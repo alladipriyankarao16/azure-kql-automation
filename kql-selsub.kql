@@ -1,0 +1,92 @@
+// Query to get all VMs with Azure Monitor Agent (AMA) status and Log Analytics Workspace ingestion
+// Define your subscription IDs here
+let targetSubscriptions = dynamic([
+    'subscription-id-1',
+    'subscription-id-2',
+    'subscription-id-3'
+    // Add more subscription IDs as needed
+]);
+Resources
+| where type =~ 'microsoft.compute/virtualmachines'
+| where subscriptionId in (targetSubscriptions)
+| extend vmId = tolower(id)
+| project vmId, vmName = name, location, resourceGroup, subscriptionId, 
+    osType = properties.storageProfile.osDisk.osType,
+    vmSize = properties.hardwareProfile.vmSize,
+    provisioningState = properties.provisioningState
+// Join with AMA extension for Windows VMs
+| join kind=leftouter (
+    Resources
+    | where type =~ 'microsoft.compute/virtualmachines/extensions'
+    | where properties.type =~ 'AzureMonitorWindowsAgent'
+    | extend vmId = tolower(substring(id, 0, indexof(id, '/extensions/')))
+    | project vmId, 
+        amaWindowsInstalled = 'Yes',
+        amaWindowsVersion = properties.typeHandlerVersion,
+        amaWindowsStatus = properties.provisioningState
+) on vmId
+// Join with AMA extension for Linux VMs
+| join kind=leftouter (
+    Resources
+    | where type =~ 'microsoft.compute/virtualmachines/extensions'
+    | where properties.type =~ 'AzureMonitorLinuxAgent'
+    | extend vmId = tolower(substring(id, 0, indexof(id, '/extensions/')))
+    | project vmId, 
+        amaLinuxInstalled = 'Yes',
+        amaLinuxVersion = properties.typeHandlerVersion,
+        amaLinuxStatus = properties.provisioningState
+) on vmId
+// Join with Data Collection Rules Associations
+| join kind=leftouter (
+    Resources
+    | where type =~ 'microsoft.insights/datacollectionruleassociations'
+    | extend vmId = tolower(properties.resourceUri)
+    | extend dcrId = tolower(properties.dataCollectionRuleId)
+    | project vmId, dcrId, dcrAssociationName = name
+) on vmId
+// Join with Data Collection Rules to get LAW workspace
+| join kind=leftouter (
+    Resources
+    | where type =~ 'microsoft.insights/datacollectionrules'
+    | extend dcrId = tolower(id)
+    | mv-expand destination = properties.destinations.logAnalytics
+    | extend workspaceResourceId = tolower(destination.workspaceResourceId)
+    | extend workspaceName = destination.name
+    | project dcrId, dcrName = name, workspaceResourceId, workspaceName
+) on dcrId
+// Consolidate AMA status
+| extend amaInstalled = case(
+    isnotempty(amaWindowsInstalled), amaWindowsInstalled,
+    isnotempty(amaLinuxInstalled), amaLinuxInstalled,
+    'No'
+)
+| extend amaVersion = case(
+    isnotempty(amaWindowsVersion), amaWindowsVersion,
+    isnotempty(amaLinuxVersion), amaLinuxVersion,
+    'N/A'
+)
+| extend amaStatus = case(
+    isnotempty(amaWindowsStatus), amaWindowsStatus,
+    isnotempty(amaLinuxStatus), amaLinuxStatus,
+    'Not Installed'
+)
+// Project final results
+| project 
+    subscriptionId,
+    resourceGroup,
+    vmName,
+    location,
+    osType,
+    vmSize,
+    vmProvisioningState = provisioningState,
+    amaInstalled,
+    amaVersion,
+    amaStatus,
+    dcrName,
+    lawWorkspaceName = workspaceName,
+    lawWorkspaceId = workspaceResourceId,
+    logsIngestionConfigured = case(
+        isnotempty(workspaceResourceId), 'Yes',
+        'No'
+    )
+| order by subscriptionId, resourceGroup, vmName asc
