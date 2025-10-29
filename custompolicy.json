@@ -1,0 +1,212 @@
+{
+  "properties": {
+    "displayName": "Deploy Nessus Agent to Virtual Machines",
+    "policyType": "Custom",
+    "mode": "Indexed",
+    "description": "Automatically deploys Nessus Agent extension to Windows and Linux virtual machines",
+    "metadata": {
+      "category": "Security",
+      "version": "1.0.0"
+    },
+    "parameters": {
+      "effect": {
+        "type": "String",
+        "metadata": {
+          "displayName": "Effect",
+          "description": "Enable or disable the execution of the policy"
+        },
+        "allowedValues": [
+          "DeployIfNotExists",
+          "AuditIfNotExists",
+          "Disabled"
+        ],
+        "defaultValue": "DeployIfNotExists"
+      },
+      "nessusKey": {
+        "type": "String",
+        "metadata": {
+          "displayName": "Nessus Linking Key",
+          "description": "The linking key from Tenable.io or Nessus Manager for agent registration"
+        }
+      },
+      "nessusServer": {
+        "type": "String",
+        "metadata": {
+          "displayName": "Nessus Server",
+          "description": "Nessus server hostname or IP (e.g., cloud.tenable.com or 192.168.1.100)"
+        },
+        "defaultValue": "cloud.tenable.com"
+      },
+      "nessusPort": {
+        "type": "String",
+        "metadata": {
+          "displayName": "Nessus Port",
+          "description": "Port for Nessus communication"
+        },
+        "defaultValue": "8834"
+      },
+      "nessusGroups": {
+        "type": "String",
+        "metadata": {
+          "displayName": "Nessus Agent Groups",
+          "description": "Comma-separated list of agent groups"
+        },
+        "defaultValue": "Azure-VMs"
+      }
+    },
+    "policyRule": {
+      "if": {
+        "allOf": [
+          {
+            "field": "type",
+            "equals": "Microsoft.Compute/virtualMachines"
+          }
+        ]
+      },
+      "then": {
+        "effect": "[parameters('effect')]",
+        "details": {
+          "type": "Microsoft.Compute/virtualMachines/extensions",
+          "roleDefinitionIds": [
+            "/providers/microsoft.authorization/roleDefinitions/9980e02c-c2be-4d73-94e8-173b1dc7cf3c"
+          ],
+          "existenceCondition": {
+            "anyOf": [
+              {
+                "allOf": [
+                  {
+                    "field": "Microsoft.Compute/virtualMachines/extensions/type",
+                    "equals": "CustomScriptExtension"
+                  },
+                  {
+                    "field": "Microsoft.Compute/virtualMachines/extensions/publisher",
+                    "equals": "Microsoft.Compute"
+                  },
+                  {
+                    "field": "Microsoft.Compute/virtualMachines/extensions/provisioningState",
+                    "equals": "Succeeded"
+                  }
+                ]
+              },
+              {
+                "allOf": [
+                  {
+                    "field": "Microsoft.Compute/virtualMachines/extensions/type",
+                    "equals": "CustomScript"
+                  },
+                  {
+                    "field": "Microsoft.Compute/virtualMachines/extensions/publisher",
+                    "equals": "Microsoft.Azure.Extensions"
+                  },
+                  {
+                    "field": "Microsoft.Compute/virtualMachines/extensions/provisioningState",
+                    "equals": "Succeeded"
+                  }
+                ]
+              }
+            ]
+          },
+          "deployment": {
+            "properties": {
+              "mode": "incremental",
+              "parameters": {
+                "vmName": {
+                  "value": "[field('name')]"
+                },
+                "location": {
+                  "value": "[field('location')]"
+                },
+                "osType": {
+                  "value": "[field('Microsoft.Compute/virtualMachines/storageProfile.osDisk.osType')]"
+                },
+                "nessusKey": {
+                  "value": "[parameters('nessusKey')]"
+                },
+                "nessusServer": {
+                  "value": "[parameters('nessusServer')]"
+                },
+                "nessusPort": {
+                  "value": "[parameters('nessusPort')]"
+                },
+                "nessusGroups": {
+                  "value": "[parameters('nessusGroups')]"
+                }
+              },
+              "template": {
+                "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+                "contentVersion": "1.0.0.0",
+                "parameters": {
+                  "vmName": {
+                    "type": "string"
+                  },
+                  "location": {
+                    "type": "string"
+                  },
+                  "osType": {
+                    "type": "string"
+                  },
+                  "nessusKey": {
+                    "type": "securestring"
+                  },
+                  "nessusServer": {
+                    "type": "string"
+                  },
+                  "nessusPort": {
+                    "type": "string"
+                  },
+                  "nessusGroups": {
+                    "type": "string"
+                  }
+                },
+                "variables": {
+                  "isWindows": "[equals(parameters('osType'), 'Windows')]",
+                  "extensionName": "[if(variables('isWindows'), 'InstallNessusAgentWindows', 'InstallNessusAgentLinux')]",
+                  "extensionPublisher": "[if(variables('isWindows'), 'Microsoft.Compute', 'Microsoft.Azure.Extensions')]",
+                  "extensionType": "[if(variables('isWindows'), 'CustomScriptExtension', 'CustomScript')]",
+                  "extensionVersion": "[if(variables('isWindows'), '1.10', '2.1')]",
+                  "windowsInstallCommand": "[concat('powershell -ExecutionPolicy Unrestricted -Command \"$ProgressPreference=''SilentlyContinue''; [Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12; $url=''https://www.tenable.com/downloads/api/v1/public/pages/nessus-agents/downloads/latest/download?i_agree_to_tenable_license_agreement=true&platform=windows&architecture=x86_64''; $output=''$env:TEMP\\NessusAgent.msi''; Invoke-WebRequest -Uri $url -OutFile $output; Start-Process msiexec.exe -ArgumentList ''/i'',''$output'',''/quiet'',''/norestart'',''NESSUS_KEY=', parameters('nessusKey'), ''',''NESSUS_SERVER=', parameters('nessusServer'), ':', parameters('nessusPort'), ''',''NESSUS_GROUPS=', parameters('nessusGroups'), ''' -Wait\"')]",
+                  "linuxInstallCommand": "[concat('#!/bin/bash\\n',\n                    'set -e\\n',\n                    'if [ -f /etc/os-release ]; then\\n',\n                    '  . /etc/os-release\\n',\n                    '  OS=$ID\\n',\n                    'else\\n',\n                    '  echo \"Cannot detect OS\"\\n',\n                    '  exit 1\\n',\n                    'fi\\n',\n                    'NESSUS_KEY=\"', parameters('nessusKey'), '\"\\n',\n                    'NESSUS_SERVER=\"', parameters('nessusServer'), '\"\\n',\n                    'NESSUS_PORT=\"', parameters('nessusPort'), '\"\\n',\n                    'NESSUS_GROUPS=\"', parameters('nessusGroups'), '\"\\n',\n                    'if command -v /opt/nessus_agent/sbin/nessuscli &> /dev/null; then\\n',\n                    '  echo \"Nessus Agent already installed\"\\n',\n                    '  /opt/nessus_agent/sbin/nessuscli agent status | grep -q \"Not linked\" && /opt/nessus_agent/sbin/nessuscli agent link --key=\"$NESSUS_KEY\" --host=\"$NESSUS_SERVER\" --port=\"$NESSUS_PORT\" --groups=\"$NESSUS_GROUPS\" || echo \"Already linked\"\\n',\n                    '  exit 0\\n',\n                    'fi\\n',\n                    'case \"$OS\" in\\n',\n                    '  ubuntu|debian)\\n',\n                    '    ARCH=$(dpkg --print-architecture)\\n',\n                    '    URL=\"https://www.tenable.com/downloads/api/v1/public/pages/nessus-agents/downloads/latest/download?i_agree_to_tenable_license_agreement=true&platform=ubuntu&architecture=$ARCH\"\\n',\n                    '    PKG=\"/tmp/nessusagent.deb\"\\n',\n                    '    curl -L -o \"$PKG\" \"$URL\"\\n',\n                    '    dpkg -i \"$PKG\"\\n',\n                    '    ;;\\n',\n                    '  rhel|centos|almalinux|rocky|amzn)\\n',\n                    '    URL=\"https://www.tenable.com/downloads/api/v1/public/pages/nessus-agents/downloads/latest/download?i_agree_to_tenable_license_agreement=true&platform=el8&architecture=x86_64\"\\n',\n                    '    PKG=\"/tmp/nessusagent.rpm\"\\n',\n                    '    curl -L -o \"$PKG\" \"$URL\"\\n',\n                    '    rpm -ivh \"$PKG\"\\n',\n                    '    ;;\\n',\n                    '  *)\\n',\n                    '    echo \"Unsupported OS: $OS\"\\n',\n                    '    exit 1\\n',\n                    '    ;;\\n',\n                    'esac\\n',\n                    'systemctl start nessusagent\\n',\n                    'systemctl enable nessusagent\\n',\n                    'sleep 10\\n',\n                    '/opt/nessus_agent/sbin/nessuscli agent link --key=\"$NESSUS_KEY\" --host=\"$NESSUS_SERVER\" --port=\"$NESSUS_PORT\" --groups=\"$NESSUS_GROUPS\"\\n',\n                    'rm -f \"$PKG\"\\n'\n                  )]"
+                },
+                "resources": [
+                  {
+                    "condition": "[variables('isWindows')]",
+                    "type": "Microsoft.Compute/virtualMachines/extensions",
+                    "apiVersion": "2021-11-01",
+                    "name": "[concat(parameters('vmName'), '/', variables('extensionName'))]",
+                    "location": "[parameters('location')]",
+                    "properties": {
+                      "publisher": "Microsoft.Compute",
+                      "type": "CustomScriptExtension",
+                      "typeHandlerVersion": "1.10",
+                      "autoUpgradeMinorVersion": true,
+                      "settings": {},
+                      "protectedSettings": {
+                        "commandToExecute": "[variables('windowsInstallCommand')]"
+                      }
+                    }
+                  },
+                  {
+                    "condition": "[not(variables('isWindows'))]",
+                    "type": "Microsoft.Compute/virtualMachines/extensions",
+                    "apiVersion": "2021-11-01",
+                    "name": "[concat(parameters('vmName'), '/', variables('extensionName'))]",
+                    "location": "[parameters('location')]",
+                    "properties": {
+                      "publisher": "Microsoft.Azure.Extensions",
+                      "type": "CustomScript",
+                      "typeHandlerVersion": "2.1",
+                      "autoUpgradeMinorVersion": true,
+                      "protectedSettings": {
+                        "script": "[base64(variables('linuxInstallCommand'))]"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
