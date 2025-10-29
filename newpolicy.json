@@ -1,0 +1,143 @@
+{
+  "mode": "Indexed",
+  "policyRule": {
+    "if": {
+      "allOf": [
+        {
+          "field": "type",
+          "equals": "Microsoft.Compute/virtualMachines"
+        },
+        {
+          "field": "Microsoft.Compute/virtualMachines/storageProfile.osDisk.osType",
+          "in": [
+            "Windows",
+            "Linux"
+          ]
+        }
+      ]
+    },
+    "then": {
+      "effect": "[parameters('effect')]",
+      "details": {
+        "type": "Microsoft.Compute/virtualMachines/extensions",
+        "existenceCondition": {
+          "allOf": [
+            {
+              "field": "Microsoft.Compute/virtualMachines/extensions/type",
+              "equals": "NessusAgent"
+            },
+            {
+              "field": "Microsoft.Compute/virtualMachines/extensions/publisher",
+              "equals": "Tenable"
+            },
+            {
+              "field": "Microsoft.Compute/virtualMachines/extensions/provisioningState",
+              "equals": "Succeeded"
+            }
+          ]
+        },
+        "deployment": {
+          "properties": {
+            "mode": "incremental",
+            "template": {
+              "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+              "contentVersion": "1.0.0.0",
+              "parameters": {
+                "vmName": {
+                  "type": "string"
+                },
+                "location": {
+                  "type": "string"
+                },
+                "vmName": {
+                  "type": "string"
+                },
+                "nessusKey": {
+                  "type": "string"
+                },
+                "nessusServer": {
+                  "type": "string"
+                },
+                "nessusPort": {
+                  "type": "string"
+                }
+              },
+              "resources": [
+                {
+                  "type": "Microsoft.Compute/virtualMachines/extensions",
+                  "apiVersion": "2021-11-01",
+                  "name": "[concat(parameters('vmName'), '/NessusAgent')]",
+                  "location": "[parameters('location')]",
+                  "properties": {
+                    "publisher": "Tenable",
+                    "type": "NessusAgent",
+                    "typeHandlerVersion": "8.3",
+                    "autoUpgradeMinorVersion": true,
+                    "settings": {
+                      "key": "[parameters('nessusKey')]",
+                      "server": "[parameters('nessusServer')]",
+                      "port": "[parameters('nessusPort')]"
+                    }
+                  }
+                }
+              ]
+            },
+            "parameters": {
+              "vmName": {
+                "value": "[field('name')]"
+              },
+              "location": {
+                "value": "[field('location')]"
+              },
+              "nessusKey": {
+                "value": "[parameters('nessusKey')]"
+              },
+              "nessusServer": {
+                "value": "[parameters('nessusServer')]"
+              },
+              "nessusPort": {
+                "value": "[parameters('nessusPort')]"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "parameters": {
+    "effect": {
+      "type": "String",
+      "metadata": {
+        "displayName": "Effect",
+        "description": "Enable or disable the execution of the policy"
+      },
+      "allowedValues": [
+        "DeployIfNotExists",
+        "Disabled"
+      ],
+      "defaultValue": "DeployIfNotExists"
+    },
+    "nessusKey": {
+      "type": "String",
+      "metadata": {
+        "displayName": "Nessus Linking Key",
+        "description": "The linking key for Nessus agent registration"
+      }
+    },
+    "nessusServer": {
+      "type": "String",
+      "metadata": {
+        "displayName": "Nessus Server",
+        "description": "Nessus Manager or Cloud server hostname/IP"
+      }
+    },
+    "nessusPort": {
+      "type": "String",
+      "metadata": {
+        "displayName": "Nessus Server Port",
+        "description": "Port for Nessus server connection"
+      },
+      "defaultValue": "8834"
+    }
+  }
+}
